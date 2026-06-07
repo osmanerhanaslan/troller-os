@@ -15,7 +15,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y xorriso squashfs-tools wget p7zip-full isolinux syslinux
+        sudo apt-get install -y xorriso squashfs-tools wget p7zip-full
     
     - name: Download Ubuntu ISO
       run: |
@@ -54,10 +54,6 @@ jobs:
     
     - name: Download packages for offline install
       run: |
-        sudo chroot squashfs-root /bin/bash -c "
-          mkdir -p /var/cache/apt/archives/troller-packages &&
-          apt-get install -y --download-only wine python3 python3-pip python3-tk pulseaudio vlc gimp libreoffice firefox steam-installer papirus-icon-theme gnome-tweaks 2>/dev/null || true
-        "
         sudo mkdir -p isocontents/pool/extras
         sudo cp squashfs-root/var/cache/apt/archives/*.deb isocontents/pool/extras/ 2>/dev/null || true
     
@@ -77,7 +73,6 @@ jobs:
     - name: Customize bootloader
       run: |
         sed -i 's/Ubuntu/Troller OS/g' isocontents/boot/grub/grub.cfg
-        sed -i 's/Ubuntu/Troller OS/g' isocontents/isolinux/txt.cfg 2>/dev/null || true
         cp Logo.png isocontents/Logo.png
         cp Logo.png isocontents/boot/grub/Logo.png
     
@@ -86,14 +81,18 @@ jobs:
         sudo xorriso -as mkisofs \
           -r -V "TROLLER_OS" \
           -o "TrollerOS-1.0.iso" \
-          -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-          -c isolinux/boot.cat \
-          -b isolinux/isolinux.bin \
-          -no-emul-boot -boot-load-size 4 -boot-info-table \
+          --grub2-mbr "isocontents/[BOOT]/1-Boot-NoEmul.img" \
+          -partition_offset 16 \
+          --mbr-force-bootable \
+          -append_partition 2 28732ac11ff8d211ba4b00a0c93ec93b "isocontents/[BOOT]/2-Boot-NoEmul.img" \
+          -appended_part_as_gpt \
+          -iso_mbr_part_type a2a0d0ebe5b9334487c068b6b72699c7 \
+          -c '/boot.catalog' \
+          -b '/boot/grub/i386-pc/eltorito.img' \
+          -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
           -eltorito-alt-boot \
-          -e boot/grub/efi.img \
+          -e '--interval:appended_partition_2:::' \
           -no-emul-boot \
-          -isohybrid-gpt-basdat \
           isocontents
     
     - name: Upload ISO
