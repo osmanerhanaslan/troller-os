@@ -1,0 +1,103 @@
+name: Build Troller OS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xorriso squashfs-tools wget p7zip-full isolinux syslinux
+    
+    - name: Download Ubuntu ISO
+      run: |
+        wget -q "https://releases.ubuntu.com/22.04/ubuntu-22.04.5-desktop-amd64.iso"
+    
+    - name: Extract ISO
+      run: |
+        mkdir -p isocontents
+        7z x ubuntu-22.04.5-desktop-amd64.iso -oisocontents -y
+    
+    - name: Extract squashfs
+      run: |
+        sudo unsquashfs -d squashfs-root isocontents/casper/filesystem.squashfs
+    
+    - name: Install apps into squashfs
+      run: |
+        sudo mount --bind /dev squashfs-root/dev
+        sudo mount --bind /proc squashfs-root/proc
+        sudo mount --bind /sys squashfs-root/sys
+        sudo mount --bind /run squashfs-root/run
+        sudo chroot squashfs-root /bin/bash -c "
+          dpkg --configure -a &&
+          apt-get install -y --fix-broken &&
+          add-apt-repository universe &&
+          add-apt-repository multiverse &&
+          dpkg --add-architecture i386 &&
+          apt-get update &&
+          apt-get install -y wine python3 python3-pip python3-tk pulseaudio vlc gimp libreoffice firefox steam-installer papirus-icon-theme gnome-tweaks &&
+          pip3 install edge-tts pygame SpeechRecognition &&
+          apt-get clean
+        "
+        sudo umount squashfs-root/dev
+        sudo umount squashfs-root/proc
+        sudo umount squashfs-root/sys
+        sudo umount squashfs-root/run
+    
+    - name: Download packages for offline install
+      run: |
+        sudo chroot squashfs-root /bin/bash -c "
+          mkdir -p /var/cache/apt/archives/troller-packages &&
+          apt-get install -y --download-only wine python3 python3-pip python3-tk pulseaudio vlc gimp libreoffice firefox steam-installer papirus-icon-theme gnome-tweaks 2>/dev/null || true
+        "
+        sudo mkdir -p isocontents/pool/extras
+        sudo cp squashfs-root/var/cache/apt/archives/*.deb isocontents/pool/extras/ 2>/dev/null || true
+    
+    - name: Add logo and wallpaper
+      run: |
+        sudo mkdir -p squashfs-root/usr/share/backgrounds/troller
+        sudo cp Logo.png squashfs-root/usr/share/backgrounds/troller/Logo.png
+        sudo mkdir -p squashfs-root/usr/share/glib-2.0/schemas
+        sudo bash -c 'printf "[org.gnome.desktop.background]\npicture-uri=\"file:///usr/share/backgrounds/troller/Logo.png\"\npicture-uri-dark=\"file:///usr/share/backgrounds/troller/Logo.png\"\n[org.gnome.desktop.interface]\ncolor-scheme=\"prefer-dark\"\ngtk-theme=\"Yaru-dark\"\nicon-theme=\"Papirus-Dark\"\n" > squashfs-root/usr/share/glib-2.0/schemas/99_troller.gschema.override'
+        sudo chroot squashfs-root glib-compile-schemas /usr/share/glib-2.0/schemas/
+    
+    - name: Repack squashfs
+      run: |
+        sudo mksquashfs squashfs-root isocontents/casper/filesystem.squashfs -comp xz -noappend
+        sudo bash -c 'du -sx --block-size=1 squashfs-root | cut -f1 > isocontents/casper/filesystem.size'
+    
+    - name: Customize bootloader
+      run: |
+        sed -i 's/Ubuntu/Troller OS/g' isocontents/boot/grub/grub.cfg
+        sed -i 's/Ubuntu/Troller OS/g' isocontents/isolinux/txt.cfg 2>/dev/null || true
+        cp Logo.png isocontents/Logo.png
+        cp Logo.png isocontents/boot/grub/Logo.png
+    
+    - name: Build ISO
+      run: |
+        sudo xorriso -as mkisofs \
+          -r -V "TROLLER_OS" \
+          -o "TrollerOS-1.0.iso" \
+          -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+          -c isolinux/boot.cat \
+          -b isolinux/isolinux.bin \
+          -no-emul-boot -boot-load-size 4 -boot-info-table \
+          -eltorito-alt-boot \
+          -e boot/grub/efi.img \
+          -no-emul-boot \
+          -isohybrid-gpt-basdat \
+          isocontents
+    
+    - name: Upload ISO
+      uses: actions/upload-artifact@v4
+      with:
+        name: TrollerOS-1.0
+        path: TrollerOS-1.0.iso
